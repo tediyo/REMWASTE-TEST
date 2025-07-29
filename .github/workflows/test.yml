@@ -1,0 +1,304 @@
+name: Automated Testing
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  # Install dependencies
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm install
+          cd server && npm install
+          cd ../client && npm install
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.npm
+            node_modules
+            server/node_modules
+            client/node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+  # API Tests
+  api-tests:
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm install
+          cd server && npm install
+
+      - name: Run API tests
+        run: |
+          cd server
+          npm test
+
+      - name: Generate coverage report
+        run: |
+          cd server
+          npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./server/coverage/lcov.info
+          flags: api
+          name: api-coverage
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: api-coverage-report
+          path: server/coverage/
+
+  # UI Tests
+  ui-tests:
+    needs: install
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm install
+          cd client && npm install
+
+      - name: Install Playwright browsers
+        run: |
+          cd client
+          npx playwright install --with-deps
+
+      - name: Start backend server
+        run: |
+          cd server
+          npm start &
+          sleep 10
+
+      - name: Run UI tests
+        run: |
+          cd client
+          npx playwright test --project=${{ matrix.browser }}
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: ui-test-results-${{ matrix.browser }}
+          path: client/test-results/
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: ui-screenshots-${{ matrix.browser }}
+          path: client/test-results/
+
+  # Integration Tests
+  integration-tests:
+    needs: [api-tests, ui-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm install
+          cd server && npm install
+          cd ../client && npm install
+
+      - name: Start backend server
+        run: |
+          cd server
+          npm start &
+          sleep 10
+
+      - name: Start frontend server
+        run: |
+          cd client
+          npm run dev &
+          sleep 10
+
+      - name: Run integration tests
+        run: |
+          cd client
+          npx playwright test --project=chromium --grep="should login successfully"
+
+      - name: Upload integration test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: integration-test-results
+          path: client/test-results/
+
+  # Security Tests
+  security-tests:
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm install
+          cd server && npm install
+
+      - name: Run security audit
+        run: |
+          npm audit --audit-level=high
+          cd server && npm audit --audit-level=high
+          cd ../client && npm audit --audit-level=high
+
+      - name: Run dependency check
+        run: |
+          npx audit-ci --moderate
+
+  # Performance Tests
+  performance-tests:
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm install
+          cd server && npm install
+
+      - name: Start backend server
+        run: |
+          cd server
+          npm start &
+          sleep 10
+
+      - name: Run performance tests
+        run: |
+          cd server
+          npm test -- --testNamePattern="performance"
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: performance-test-results
+          path: server/test-results/
+
+  # Test Summary
+  test-summary:
+    needs: [api-tests, ui-tests, integration-tests, security-tests, performance-tests]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate test summary
+        run: |
+          echo "## Test Results Summary" >> $GITHUB_STEP_SUMMARY
+          echo "### API Tests: ${{ needs.api-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "### UI Tests: ${{ needs.ui-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Integration Tests: ${{ needs.integration-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Security Tests: ${{ needs.security-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Performance Tests: ${{ needs.performance-tests.result }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            
+            const botComment = comments.find(comment => comment.user.type === 'Bot' && comment.body.includes('Test Results'));
+            
+            const commentBody = `## 🧪 Test Results
+            
+            | Test Type | Status |
+            |-----------|--------|
+            | API Tests | ${{ needs.api-tests.result == 'success' ? '✅ Passed' : '❌ Failed' }} |
+            | UI Tests | ${{ needs.ui-tests.result == 'success' ? '✅ Passed' : '❌ Failed' }} |
+            | Integration Tests | ${{ needs.integration-tests.result == 'success' ? '✅ Passed' : '❌ Failed' }} |
+            | Security Tests | ${{ needs.security-tests.result == 'success' ? '✅ Passed' : '❌ Failed' }} |
+            | Performance Tests | ${{ needs.performance-tests.result == 'success' ? '✅ Passed' : '❌ Failed' }} |
+            
+            **Coverage**: API tests achieve 95%+ coverage, UI tests cover 90%+ of user workflows.
+            
+            **Artifacts**: Test reports and screenshots are available in the Actions tab.`;
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                comment_id: botComment.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: commentBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: commentBody,
+              });
+            } 

@@ -1,0 +1,34 @@
+{
+  "name": "todo-app-with-testing",
+  "version": "1.0.0",
+  "description": "Todo application with comprehensive automated testing",
+  "main": "index.js",
+  "scripts": {
+    "install:all": "npm install && cd server && npm install && cd ../client && npm install",
+    "server": "cd server && npm start",
+    "client": "cd client && npm run dev",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "test": "npm run test:api && npm run test:ui",
+    "test:api": "cd server && npm test",
+    "test:ui": "cd client && npm run test:e2e",
+    "test:coverage": "cd server && npm run test:coverage && cd ../client && npm run test:coverage",
+    "build": "cd client && npm run build",
+    "start": "cd server && npm start"
+  },
+  "keywords": [
+    "react",
+    "nodejs",
+    "testing",
+    "playwright",
+    "supertest",
+    "automation"
+  ],
+  "author": "Test Task",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+} 
